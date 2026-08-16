@@ -1,6 +1,12 @@
 # audio-integrity-toolkit
 
+[![CI](https://github.com/hycccc/audio-integrity-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/hycccc/audio-integrity-toolkit/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-1fa88c.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-cc7434.svg)](pyproject.toml)
+
 Acceptance-gate QC for audio datasets: **fake-lossless detection**, clipping, and dynamic-range checks.
+
+![Genuine lossless vs MP3-transcode spectrum](docs/spectrum-comparison.png)
 
 When you source audio at scale, a meaningful share of "lossless" deliveries are lossy transcodes re-wrapped in a FLAC/WAV container. The container lies; the spectrum doesn't. This tool implements the acceptance-gate pattern I use for music-dataset ingestion: cheap enough to run on every file, strict enough to catch the most common vendor-delivery defects before they poison a training set.
 
