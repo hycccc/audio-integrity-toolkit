@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audio-integrity-toolkit"
+version = "0.1.0"
+description = "Acceptance-gate QC for audio datasets: fake-lossless detection, clipping, dynamic range"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Yuchen Hu" }]
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "soundfile"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+audio-check = "audio_integrity.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/hycccc/audio-integrity-toolkit"
+
+[tool.setuptools.packages.find]
+where = ["src"]
