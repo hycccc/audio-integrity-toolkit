@@ -1,5 +1,6 @@
 import numpy as np
 import soundfile as sf
+import pytest
 
 from audio_integrity import decode_hash, find_duplicates, fingerprint, similarity, verify
 
@@ -98,3 +99,50 @@ def test_nonstandard_rate_detected(tmp_path):
     report = verify(_write(tmp_path, "odd.wav", _song(seed=7)[: 37123 * 3], sr=37123))
     assert not report.passed
     assert any("nonstandard sample rate" in i for i in report.issues)
+
+
+# ---------------------------------------------------------- indexed strategy
+
+from audio_integrity.dedup import candidate_pairs
+
+
+def _batch(tmp_path, n_songs=12):
+    """n distinct songs, plus a transcode-ish near-dup and an exact rewrap."""
+    paths = []
+    for i in range(n_songs):
+        paths.append(_write(tmp_path, f"song{i:02d}.wav", _song(seed=100 + i)))
+    near = _song(seed=100) + np.random.default_rng(1).standard_normal(int(SR * 8)) * 0.003
+    paths.append(_write(tmp_path, "song00-remaster.wav", near))
+    rewrap = sf.read(paths[1], dtype="int16")[0]
+    p = tmp_path / "song01-vendor.flac"
+    sf.write(p, rewrap, SR)
+    paths.append(str(p))
+    return paths
+
+
+def test_indexed_agrees_with_pairwise(tmp_path):
+    paths = _batch(tmp_path)
+    as_sets = lambda clusters: {(c.kind, tuple(sorted(c.paths))) for c in clusters}
+    pairwise = as_sets(find_duplicates(paths, strategy="pairwise"))
+    indexed = as_sets(find_duplicates(paths, strategy="indexed"))
+    assert indexed == pairwise
+    assert {k for k, _ in indexed} == {"exact", "near"}
+
+
+def test_index_prunes_most_pairs(tmp_path):
+    """The index is a filter: the true near-dup pair survives it, and the
+    candidate list is far smaller than all-pairs."""
+    paths = _batch(tmp_path)
+    from audio_integrity.dedup import fingerprint as fp
+    fps = {p: fp(p) for p in paths if not p.endswith(".flac")}
+    pairs = candidate_pairs(fps)
+    a = str(tmp_path / "song00.wav")
+    b = str(tmp_path / "song00-remaster.wav")
+    assert ((a, b) if a < b else (b, a)) in pairs
+    n = len(fps)
+    assert len(pairs) < n * (n - 1) // 2 / 3   # prunes at least ~2/3 of pairs
+
+
+def test_unknown_strategy_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        find_duplicates([], strategy="quantum")

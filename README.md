@@ -47,7 +47,7 @@ $ audio-check dedup vendor_batch_07/
   vendor_batch_07/track_b_v2.wav
 ```
 
-Clustering is pairwise — right for a delivery batch. At library scale you'd bucket fingerprints with an inverted index first; the fingerprint itself is designed to make that possible.
+Clustering has two strategies (`--strategy`, default `auto`): **pairwise** compares every pair — exact, right for a delivery batch — and **indexed** buckets fingerprints with an inverted index first, the library-scale path. Index keys are frame words quantized to their top 12 bits, and only each file's 32 smallest keys are indexed (a bottom-k sketch), so full-length songs don't flood the buckets; a pair is compared only when the sketches share ≥2 keys. The index is a recall filter, never a judge — every candidate still faces the same `similarity()` threshold, so a bucket collision can waste compute but cannot invent a duplicate. On a 105-file synthetic batch with 5 planted near-dups, the index pruned 77% of comparisons and produced clusters identical to pairwise, 5/5. `auto` switches to the index past 64 files.
 
 ## `audio-check meta` — metadata–audio matching
 

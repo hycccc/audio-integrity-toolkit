@@ -14,9 +14,18 @@ Two tiers, mirroring how dataset ingestion actually needs them:
 The fingerprint is deliberately simple (log-spaced band energies,
 delta-coded across time into per-frame bit patterns) — a reference
 implementation of the idea behind production systems like Chromaprint.
-Clustering here is pairwise O(n²), which is fine for a delivery batch;
-at library scale you would bucket fingerprints with an inverted index
-first and only compare within buckets.
+
+Clustering has two strategies. **Pairwise** compares every pair — exact,
+and fine for a delivery batch. **Indexed** buckets fingerprints with an
+inverted index first (each frame word, quantized to its top 12 bits, is a
+key; two files become a candidate pair only when they share at least
+``MIN_SHARED_KEYS`` distinct keys) and runs the full similarity only on
+candidates — the library-scale path, where comparisons grow with the
+number of actual near-dups instead of n². The index is a recall filter,
+never a judge: every candidate still passes through the same
+``similarity()`` threshold, so a bucket collision can cost compute but
+cannot create a false duplicate. The default strategy switches to the
+index past ``INDEX_AUTO_THRESHOLD`` files.
 """
 
 from __future__ import annotations
@@ -35,6 +44,10 @@ FP_BANDS = 17              # 17 band energies -> 16 delta bits per frame
 FP_MIN_FRAMES = 8          # refuse to fingerprint clips shorter than ~2 s
 DEFAULT_THRESHOLD = 0.85   # bit-agreement to call a near-dup (chance level is 0.5)
 MAX_OFFSET_FRAMES = 4      # tolerate small leading-silence misalignment
+INDEX_KEY_BITS = 12        # frame words quantized to their top 12 bits as index keys
+BOTTOM_K_KEYS = 32         # bottom-k sketch: only each file's K smallest keys are indexed
+MIN_SHARED_KEYS = 2        # candidate pair needs >= this many shared sketch keys
+INDEX_AUTO_THRESHOLD = 64  # "auto" strategy switches to the index past this many files
 
 
 @dataclass
@@ -108,8 +121,47 @@ def similarity(fp_a: np.ndarray, fp_b: np.ndarray) -> float:
     return best
 
 
-def find_duplicates(paths: list[str], threshold: float = DEFAULT_THRESHOLD) -> list[DupCluster]:
-    """Cluster a batch of files into exact- and near-duplicate groups."""
+def candidate_pairs(fps: dict[str, np.ndarray],
+                    min_shared: int = MIN_SHARED_KEYS) -> list[tuple[str, str]]:
+    """Inverted-index candidate generation for the near-dup pass.
+
+    Each fingerprint's frame words, quantized to their top ``INDEX_KEY_BITS``
+    bits, become index keys — quantizing tolerates bit noise in the low
+    bands, and set-of-keys matching tolerates frame offsets for free. Only
+    each file's ``BOTTOM_K_KEYS`` smallest keys enter the index (a bottom-k
+    sketch): near-dups have near-identical key sets, so their smallest keys
+    coincide, while full-length songs stop flooding the 2^12-key space and
+    bucket sizes stay bounded no matter the file duration. A pair is a
+    candidate when the sketches share at least ``min_shared`` keys.
+    Recall filter only — candidates still face the real ``similarity()``.
+    """
+    shift = 16 - INDEX_KEY_BITS
+    keys = {p: sorted(set(np.unique(fp >> shift).tolist()))[:BOTTOM_K_KEYS]
+            for p, fp in fps.items()}
+    index: dict[int, list[str]] = {}
+    for p, ks in keys.items():
+        for k in ks:
+            index.setdefault(k, []).append(p)
+    shared: dict[tuple[str, str], int] = {}
+    for bucket in index.values():
+        for i, a in enumerate(bucket):
+            for b in bucket[i + 1:]:
+                pair = (a, b) if a < b else (b, a)
+                shared[pair] = shared.get(pair, 0) + 1
+    return [pair for pair, n in shared.items() if n >= min_shared]
+
+
+def find_duplicates(paths: list[str], threshold: float = DEFAULT_THRESHOLD,
+                    strategy: str = "auto") -> list[DupCluster]:
+    """Cluster a batch of files into exact- and near-duplicate groups.
+
+    ``strategy``: ``"pairwise"`` compares every pair (exact, O(n²)),
+    ``"indexed"`` generates candidates from an inverted index first
+    (library scale), ``"auto"`` picks the index past
+    ``INDEX_AUTO_THRESHOLD`` files.
+    """
+    if strategy not in ("auto", "pairwise", "indexed"):
+        raise ValueError(f"unknown strategy: {strategy!r}")
     by_hash: dict[str, list[str]] = {}
     fps: dict[str, np.ndarray] = {}
     for p in paths:
@@ -135,13 +187,17 @@ def find_duplicates(paths: list[str], threshold: float = DEFAULT_THRESHOLD) -> l
             x = parent[x]
         return x
 
+    if strategy == "indexed" or (strategy == "auto" and len(reps) > INDEX_AUTO_THRESHOLD):
+        pairs = candidate_pairs({p: fps[p] for p in reps})
+    else:
+        pairs = [(a, b) for i, a in enumerate(reps) for b in reps[i + 1:]]
+
     sims: dict[tuple[str, str], float] = {}
-    for i, a in enumerate(reps):
-        for b in reps[i + 1 :]:
-            s = similarity(fps[a], fps[b])
-            if s >= threshold:
-                sims[(a, b)] = s
-                parent[find(a)] = find(b)
+    for a, b in pairs:
+        s = similarity(fps[a], fps[b])
+        if s >= threshold:
+            sims[(a, b) if a < b else (b, a)] = s
+            parent[find(a)] = find(b)
 
     groups: dict[str, list[str]] = {}
     for p in reps:

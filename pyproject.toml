@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audio-integrity-toolkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Acceptance-gate QC for audio datasets: dedup (exact + spectral-fingerprint near-dups), metadata-audio matching, fake-lossless detection"
 readme = "README.md"
 license = { text = "MIT" }

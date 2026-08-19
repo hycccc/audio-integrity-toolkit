@@ -39,4 +39,6 @@ jobs:
           audio-check /tmp/batch/a.wav
           out=$(audio-check dedup /tmp/batch --json || true)
           echo "$out" | grep '"kind": "exact"'
+          out=$(audio-check dedup /tmp/batch --strategy indexed --json || true)
+          echo "$out" | grep '"kind": "exact"'
           if audio-check meta /tmp/batch/padded.wav; then echo "meta should have failed" && exit 1; fi

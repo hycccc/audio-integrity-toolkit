@@ -73,8 +73,9 @@ def _run_gate(files: list[Path], as_json: bool) -> int:
     return 1 if failed else 0
 
 
-def _run_dedup(files: list[Path], as_json: bool, threshold: float) -> int:
-    clusters = find_duplicates([str(f) for f in files], threshold=threshold)
+def _run_dedup(files: list[Path], as_json: bool, threshold: float, strategy: str) -> int:
+    clusters = find_duplicates([str(f) for f in files], threshold=threshold,
+                               strategy=strategy)
     if as_json:
         for c in clusters:
             print(json.dumps(c.to_dict()))
@@ -137,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
             "--threshold", type=float, default=DEFAULT_THRESHOLD,
             help=f"near-duplicate bit-agreement threshold (default {DEFAULT_THRESHOLD})",
         )
+        parser.add_argument(
+            "--strategy", choices=["auto", "pairwise", "indexed"], default="auto",
+            help="near-dup comparison strategy: pairwise = every pair (exact), "
+                 "indexed = inverted-index candidates first (library scale), "
+                 "auto = indexed past 64 files (default)",
+        )
     args = parser.parse_args(argv)
 
     try:
@@ -147,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("no audio files found")
 
     if cmd == "dedup":
-        return _run_dedup(files, args.json, args.threshold)
+        return _run_dedup(files, args.json, args.threshold, args.strategy)
     if cmd == "meta":
         return _run_meta(files, args.json)
     return _run_gate(files, args.json)
