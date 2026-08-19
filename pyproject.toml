@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audio-integrity-toolkit"
-version = "0.1.0"
-description = "Acceptance-gate QC for audio datasets: fake-lossless detection, clipping, dynamic range"
+version = "0.2.0"
+description = "Acceptance-gate QC for audio datasets: dedup (exact + spectral-fingerprint near-dups), metadata-audio matching, fake-lossless detection"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Yuchen Hu" }]

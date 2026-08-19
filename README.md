@@ -4,13 +4,19 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-1fa88c.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-cc7434.svg)](pyproject.toml)
 
-Acceptance-gate QC for audio datasets: **fake-lossless detection**, clipping, and dynamic-range checks.
+Acceptance-gate QC for audio datasets — the three checks a music-data ingestion pipeline runs on every delivery: **dedup** (exact + spectral-fingerprint near-duplicates), **metadata–audio matching**, and **fake-lossless detection** (plus clipping and dynamic range).
 
 ![Genuine lossless vs MP3-transcode spectrum](docs/spectrum-comparison.png)
 
-When you source audio at scale, a meaningful share of "lossless" deliveries are lossy transcodes re-wrapped in a FLAC/WAV container. The container lies; the spectrum doesn't. This tool implements the acceptance-gate pattern I use for music-dataset ingestion: cheap enough to run on every file, strict enough to catch the most common vendor-delivery defects before they poison a training set.
+When you source audio at scale, deliveries lie in three ways: the *same recording* arrives twice under different names or containers; the *paperwork* (extension, header, duration) disagrees with the signal; and "lossless" files are lossy transcodes re-wrapped in a FLAC/WAV container. This tool implements the acceptance-gate pattern I use for music-dataset ingestion — one check per lie, each cheap enough to run on every file, strict enough to catch the defects that poison a training set.
 
-## How it works
+```bash
+audio-check       <files-or-dirs>   # spectral integrity gate (fake-lossless, clipping, DR)
+audio-check dedup <files-or-dirs>   # exact + near-duplicate clusters
+audio-check meta  <files-or-dirs>   # metadata–audio consistency
+```
+
+## `audio-check` — the spectral gate
 
 1. **Spectral cutoff analysis** — compute the Welch PSD of the (downmixed) signal and locate the highest frequency with energy above a relative −80 dB floor. Lossy encoders apply characteristic low-pass filters, so a "FLAC" whose spectrum stops near 16 kHz was almost certainly an MP3 128 kbps once:
 
@@ -23,6 +29,40 @@ When you source audio at scale, a meaningful share of "lossless" deliveries are 
 
 2. **Clipping detection** — count samples at ≥ 0.999 full scale.
 3. **Dynamic-range estimate** — peak, RMS, and crest factor (peak − RMS), a quick proxy for over-compressed masters.
+
+## `audio-check dedup` — duplicate clusters
+
+Two tiers, because ingestion needs both:
+
+- **Exact** — a SHA-256 of the *decoded PCM*, not the file bytes, so the same master shipped as WAV by one vendor and FLAC by another is caught as one song.
+- **Near** — a compact spectral fingerprint (log-spaced band energies, delta-coded over time into per-frame bit patterns — the idea behind Chromaprint, in ~60 lines). Level changes, re-encodes, and light processing survive the exact tier; they don't survive this one. Alignment tolerates a few frames of leading-silence offset.
+
+```
+$ audio-check dedup vendor_batch_07/
+[DUP exact]
+  vendor_batch_07/track_a.wav
+  vendor_batch_07/track_a_master.flac
+[DUP near 91%]
+  vendor_batch_07/track_b.wav
+  vendor_batch_07/track_b_v2.wav
+```
+
+Clustering is pairwise — right for a delivery batch. At library scale you'd bucket fingerprints with an inverted index first; the fingerprint itself is designed to make that possible.
+
+## `audio-check meta` — metadata–audio matching
+
+The audio and its metadata come from different systems, and disagree constantly. Deterministic per-file checks: container format vs extension (the bytes win), header duration vs decoded duration (truncated transfers), leading/trailing silence (sloppy cuts that break lyric/annotation alignment downstream), nonstandard sample rates and channel layouts (conversion accidents).
+
+```
+$ audio-check meta vendor_batch_07/
+[FAIL] vendor_batch_07/padded.wav
+  WAV (.wav) · 44100 Hz · 1 ch · 11.00s
+  - leading silence: 3.0s
+[PASS] vendor_batch_07/track_a.wav
+  WAV (.wav) · 44100 Hz · 1 ch · 8.00s
+```
+
+Every command emits `--json` (one object per line) and a non-zero exit code on any failure, so all three drop straight into CI or an ingestion pipeline.
 
 ## Install
 

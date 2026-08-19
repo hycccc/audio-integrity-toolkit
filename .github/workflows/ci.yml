@@ -8,6 +8,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.10", "3.12"]
@@ -18,3 +19,23 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e .[dev]
       - run: pytest -q
+      - name: smoke-test all three commands on a synthetic batch
+        run: |
+          python - <<'PY'
+          import numpy as np, soundfile as sf, os
+          os.makedirs("/tmp/batch", exist_ok=True)
+          rng = np.random.default_rng(0)
+          t = np.arange(44100 * 8) / 44100
+          song = sum(0.1 * np.sin(2 * np.pi * f * t) for f in rng.uniform(200, 2000, 4))
+          spec = np.fft.rfft(rng.standard_normal(len(t)))
+          spec /= np.sqrt(np.maximum(np.fft.rfftfreq(len(t), 1/44100), 1.0))
+          song = song + 0.3 * np.fft.irfft(spec, n=len(t)) / 40
+          song = song / np.max(np.abs(song)) * 0.7
+          sf.write("/tmp/batch/a.wav", song, 44100)
+          sf.write("/tmp/batch/a2.flac", sf.read("/tmp/batch/a.wav", dtype="int16")[0], 44100)
+          sf.write("/tmp/batch/padded.wav", np.concatenate([np.zeros(44100*3), song]), 44100)
+          PY
+          audio-check /tmp/batch/a.wav
+          out=$(audio-check dedup /tmp/batch --json || true)
+          echo "$out" | grep '"kind": "exact"'
+          if audio-check meta /tmp/batch/padded.wav; then echo "meta should have failed" && exit 1; fi
